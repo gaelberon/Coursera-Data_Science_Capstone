@@ -1,0 +1,923 @@
+---
+title: "Data Science Capstone - Week 2 - Milestone report"
+author: "GAEL BERON"
+date: "25/10/2017"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+library(R.utils)
+library(stringi)
+library(knitr)
+library(tokenizers)
+library(dplyr)
+library(caret)
+library(tm)
+library(qdap)
+library(ngram)
+library(wordcloud)
+library(ggplot2)
+library(gridExtra)
+library(gridGraphics)
+library(gridBase)
+knitr::opts_chunk$set(echo = FALSE)
+knitr::opts_chunk$set(cache = TRUE)
+knitr::opts_chunk$set(error = FALSE)
+knitr::opts_chunk$set(warning = FALSE)
+knitr::opts_chunk$set(comment = "")
+
+```
+
+# Overview
+
+This analysis report is part of a bigger project which aims to build a model that predicts the next word in a sequence entered by a user. The goal of this first sub-project is to get used to working with the data and processing an exploratory analysis on the files provided. As this document should be concise, it only explains the major features of the data and briefly summarizes the next steps and key ideas in order to build the prediction model.  
+The files provided in this capstone project are extracts from US blogs, Twitter and news. They contain a large amount of text lines, and the very first action we had to proceed after looking at the files, was to get a sample out of the millions of lines in order to be fast enough with the computation. Then we built 3 sub data sets on this sample: training (60%), testing (30%) and validation (10%).  
+The raw data are too messy to perform our analysis, and contain some unexpected formatting and syntaxing forms, as well as profanities that we needed to clean before going further.  
+Once those pre-processing activities had been performed, we finally were able to proceed with a first level of analysis of words and sequences of words: unigrams, bigrams and trigrams.  
+Thus, we rapidly found the interest to consider the 'stop words' in our prediction model. Indeed, as per our analysis hereafter, a very few of the most frequent 'stop words' are representing a very large part of the total number of words in our training data set: 4 words represent 12% of the total number of words (6.1+ millions), 142 words represent 50% and 8021 words represent 90%.
+
+# Analysis
+
+## Global analysis of the provided files
+
+The 3 files provided are:  
+- 'en_US.blogs.txt',  
+- 'en_US.twitter.txt',  
+- 'en_US.news.txt'  
+
+```{r global_settings}
+####################################
+## Set global settings and variables
+####################################
+
+# Set seed, working directory and references to data files
+set.seed(123456)
+proc_time_per_treatment <- data.frame(matrix(ncol = 4, nrow = 0))
+names(proc_time_per_treatment) <- c("treatment", "user", "system", "elapsed")
+
+setwd("/Users/gaelberon/Documents/Coursera/Data_Science_Capstone")
+fileNameList <- c("en_US.blogs.txt",
+                  "en_US.twitter.txt",
+                  "en_US.news.txt")
+fileList <- c(
+        paste0(getwd(), "/final/en_US/", fileNameList[1]),
+        paste0(getwd(), "/final/en_US/", fileNameList[2]),
+        paste0(getwd(), "/final/en_US/", fileNameList[3])
+)
+
+# Data frame containing the data input files details
+file_details <- data.frame(matrix(ncol = 9, nrow = 0))
+
+# Initialize the sampling factor for study data set
+sampling_factor <- .1
+# Initialize the raw data set
+original_raw_data <- NULL
+raw_data <- NULL
+# Out of the random sample, split into the training, testing and validation data sets
+training_factor <- .6
+testing_factor <- .3
+validation_factor <- .1
+# Initialize the training, testing and validation data sets
+training <- NULL
+testing <- NULL
+validation <- NULL
+
+# Data frame containing the training, testing and validation data sets details
+datasets_details <- data.frame(matrix(ncol = 5, nrow = 0))
+```
+
+```{r global_functions}
+## Using gridGraphics package, grab_grob will allow to return regular graphics
+## into a grob in order to be displayed together with any other kind of graphics
+grab_grob <- function(){
+        grid.echo()
+        grid.grab()
+}
+
+## set_proc_time_per_treatment: Updates data frame 'proc_time_per_treatment' with
+## elapsed time between given parameters 'start_time' and 'stop_time'. Linked
+## this data to the treatment's name passed as a characters' string parameter
+## proc_time_per_treatment = input data frame to be updated
+## treatment_name = input characters string with given name for the processed treatment
+## start_time = input recorded time at the begining of the treatment as 'proc.time' format
+## stop_time = input recorded time at the end of the treatment as 'proc.time' format
+## proc_time_per_treatment = output updated data frame
+set_proc_time_per_treatment <- function(df_to_update,
+                                        treatment_name,
+                                        start_time,
+                                        stop_time) {
+        # calculate the elapsed time between start and stop
+        elapsed_time <- stop_time - start_time
+        
+        # update the data frame 'proc_time_per_treatment' with
+        # given name for the processed treatment, and elapsed
+        # time between start and stop
+        updated_df <- rbind(df_to_update,
+                            data.frame(treatment = treatment_name,
+                                       user = elapsed_time[[1]],
+                                       system = elapsed_time[[2]],
+                                       elapsed = elapsed_time[[3]]))
+        
+        # return the updated data frame 'proc_time_per_treatment'
+        return(updated_df)
+        
+}
+
+## read_txt_file: Reads a text file using function 'readLines' of package 'R.utils'
+## and loading its output into a vector whose elements are lines in the file.
+##
+## fileName = input text fileName in the working directory
+## warn = FALSE, skip warnings of missing EOF
+## encoding = "UTF-8", encoding type for the file to read
+## skipNul = TRUE, skip warnings of embedded nul
+## textVector = output a vector of text
+##
+read_txt_file <- function(fileName, warn = FALSE, encoding = "UTF-8", skipNul = TRUE) {
+        textFile <- file(fileName, open = "r")
+        textVector <- readLines(textFile,
+                                warn = warn,
+                                encoding = encoding,
+                                skipNul = skipNul)
+        close(textFile)
+        return(textVector)
+}
+
+## clean_dataset: Removes English stopwords from a vector of charater strings using packages 'tm'.
+## 
+## dataset = input vector of character strings to be cleand
+## dataset = output vector cleaned from all unexpected data
+##
+remove_stop_words <- function(dataset) {
+        ## Remove English stopwords if needed
+        dataset <- tm_map(dataset, removeWords, stopwords("english"))
+        
+        return(dataset)
+}
+
+## clean_dataset: Cleans a vector of charater strings using packages 'tm' and 'qdap'.
+## For each character strings:
+## - Convert to plain text document
+## - Convert to lower case
+## - Replace contractions with their full forms
+## - Remove profanities
+## - Remove numbers and punctuation
+## - Strip white spaces
+##
+## dataset = input vector of character strings to be cleand
+## dataset = output vector cleaned from all unexpected data
+##
+clean_dataset <- function(dataset) {
+        ## Convert to plain text document
+        dataset <- tm_map(dataset, PlainTextDocument)
+        
+        ## Convert to lower case
+        dataset <- tm_map(dataset, content_transformer(tolower))
+        
+        ## Replace contractions with their full forms
+        dataset <- tm_map(dataset, content_transformer(replace_contraction))
+        
+        ## Remove profanities
+        
+        ## 1. Read Google naughty word list
+        ## from https://gist.github.com/ryanlewis/a37739d710ccdb4b406d
+        banned_words <- read_txt_file(paste0(getwd(),"/google_twunter_lol.txt"))
+        ## 2. Remove Google banned words from our dataset
+        dataset <- tm_map(dataset, removeWords, banned_words)
+        
+        ## Remove numbers, puntuation and strip white space
+        
+        ## Replace non alphabetic characters with spaces
+        ## toSpace from onepager.togaware.com/TextMiningO.pdf
+        to_space <- content_transformer(function(x, pattern) gsub(pattern, " ", x))
+        dataset <- tm_map(dataset, to_space, "[^a-zA-Z|\'s]")
+        
+        ### LIMITATIONS :
+        ##    - do not separate sentences
+        ##    - [OK now] do not manage the " 's " cases, for instance
+        ##    - 
+        ##    - 
+        
+        ## Strip white space
+        dataset <- tm_map(dataset, stripWhitespace)
+        
+        return(dataset)
+}
+```
+
+```{r global_data_loading_and_analysis}
+# Read the input data files from variable fileList and build:
+# file_details: a data frame containing global analysis
+# raw_data: a vector that contains a random sample of each input data file mixed together
+for (i in 1:length(fileList)) {
+        # Iterate on files in fileList
+        file <- fileList[i]
+        file_lines <- read_txt_file(fileName = file)
+        nb_lines <- length(file_lines)
+        #print(paste0("Nb of lines in the file ", fileNameList[i], " -> ", nb_lines))
+        min_length <- min(nchar(file_lines))
+        max_length <- max(nchar(file_lines))
+        nb_words_lines <- stri_count_words(file_lines)
+        nb_words <- sum(nb_words_lines)
+        #print(paste0("Nb of words in the file ", fileNameList[i], " -> ", nb_words))
+        min_nb_words <- min(nb_words_lines)
+        max_nb_words <- max(nb_words_lines)
+        
+        # Update the files details dataframe
+        file_details <- rbind(file_details,
+                              data.frame(file = fileNameList[i],
+                                         file_size_Mb = round(file.info(file)$size/1024/1024,2),
+                                         nb_lines = nb_lines,
+                                         nb_words = nb_words,
+                                         words_per_line = round(nb_words/nb_lines,2),
+                                         shortest_line = min_length,
+                                         min_nb_words = min_nb_words,
+                                         longest_line = max_length,
+                                         max_nb_words = max_nb_words))
+        
+        # Sample the current read file and split the sample into training,
+        # testing and validation data sets
+        file_sample <- sample(file_lines,
+                              size = length(file_lines)*sampling_factor,
+                              replace = FALSE)
+        # Combine samples of all the 3 data files (blogs, twitter and news) into
+        # the vector 'raw_data'
+        original_raw_data <- c(original_raw_data, file_sample)
+}
+file_details <- format(file_details, nsmall = 1, big.mark = ",")
+
+# Permutate lines into the 'raw_data' vector containing the combined samples
+raw_data <- sample(original_raw_data, size = length(original_raw_data), replace = FALSE)
+```
+
+Once files have been loaded, we performed a few basic analysis as per the below table.  
+This table give a few details on each file:  
+- <b>file</b>: name of the file  
+- <b>file_size_Mb</b>: size of the file (in Mb)  
+- <b>nb_lines</b>: number of lines in the file  
+- <b>nb_words</b>: number of words in the file  
+- <b>words_per_line</b>: average number of words per line  
+- <b>shortest_line</b>: number of characters in the shortest line  
+- <b>min_nb_words</b>: minimum number of words in a line  
+- <b>longest_line</b>: number of characters in the longest line  
+- <b>max_nb_words</b>: maximum number of words in a line  
+
+```{r display_global_analysis, cache = FALSE, results = 'asis'}
+kable(file_details, format = "markdown")
+```
+
+## Sampling and splitting into TRAINING, TESTING and VALIDATION data sets
+
+As per the above table, the total amount of raw data combined from the 3 input files ('blogs', 'twitter' and 'news') is very large (about 4.27 millions of lines). Therefore, out of it, we extracted a random sample of ```r paste0(sampling_factor*100,"%")``` on the total number of lines. This helped us in implementing our model without dedicating too much time with computation. This ratio is parameterizable and we still can increase the amount of data if needed.  
+Then, out of this sample, we created 3 data sets: 'training' (60%), 'testing' (30%) and 'validation' (10%) which were usefull along the creation of our prediction model.  
+
+```{r global_data_loading}
+# Partitioning the 'raw_data' vector into 'testing', and then 'training' and 'validation' data sets
+start_time <- proc.time()
+raw_data_non_testing <- NULL
+if (testing_factor != 0) {
+        in_testing <- createDataPartition(seq_len(NROW(raw_data)),
+                                          p = testing_factor,
+                                          list = FALSE)
+        testing <- raw_data[in_testing]
+        raw_data_non_testing <- raw_data[-in_testing]
+} else {
+        raw_data_non_testing <- raw_data
+}
+
+#in_training <- raw_data == raw_data
+in_training <- createDataPartition(seq_len(NROW(raw_data_non_testing)),
+                                   p = training_factor/(training_factor+validation_factor),
+                                   list = FALSE)
+training <- raw_data_non_testing[in_training]
+validation <- raw_data_non_testing[-in_training]
+
+# Calculate ratios for number of lines in the 'training', 'testing' and 'validation'
+# datasets out of the total number of lines
+ratio_training <- length(training)/(length(training)+length(testing)+length(validation))
+ratio_testing <- length(testing)/(length(training)+length(testing)+length(validation))
+ratio_validation <- length(validation)/(length(training)+length(testing)+length(validation))
+stop_time <- proc.time()
+proc_time_per_treatment <- set_proc_time_per_treatment(
+        proc_time_per_treatment,
+        "Create training, testing and validation data sets",
+        start_time,
+        stop_time)
+```
+
+```{r clean_workspace}
+# Save data to files and remove temporary data
+save(original_raw_data, file_details, file = "original_data.rda")
+save(training, testing, validation, datasets_details, file = "sample_data.rda")
+rm(in_testing, raw_data_non_testing, in_training, original_raw_data, raw_data)
+```
+
+## Cleaning and pre-processing the data
+
+```{r training_dataset_quick_view}
+# Convert training dataset to corpus
+trainCorpus <- SimpleCorpus(VectorSource(training))
+# Inspect a few lines
+control_sample <- 3
+control_lines <- sample(1:length(trainCorpus), control_sample)
+inspect(trainCorpus[control_lines])
+```
+
+A quick look at ```r control_sample``` lines of the training data set (see above) allows us to understand that we need to perform some cleaning and pre-processing actions. The data had been taken "as is" from blogs, Twitter and news Web sites. They include many kinds of formatting and syntaxing forms that won't help us in being accurate in our prediction model. Moreover, because we don't want our model to propose some profanities, we need to remove them from our data sets.  
+
+Thus, we performed the following actions prior to any further analysis of our data sets:  
+- Convert to plain text document  
+- Convert to lower case  
+- Replace contractions with their full forms  
+- Remove profanities  
+- Remove numbers and punctuation  
+- Strip white spaces  
+
+Hereafter is the result after cleaning the same ```r control_sample``` lines as previously:  
+
+```{r training_dataset_after_cleaning}
+# Call clean_dataset function to proceed with cleaning actions
+start_time <- proc.time()
+trainCorpus <- clean_dataset(trainCorpus)
+stop_time <- proc.time()
+proc_time_per_treatment <- set_proc_time_per_treatment(
+        proc_time_per_treatment,
+        "Training data set - Call to clean_dataset function",
+        start_time,
+        stop_time)
+# Inspect the same few lines again, after cleaning
+inspect(trainCorpus[control_lines])
+```
+
+In addition to the above actions, we also figured out that most of the words in our sample of raw data are considered as "stop words" (see: [Stop_words page from Wikipedia](https://en.wikipedia.org/wiki/Stop_words)). So we might consider to remove them in order to build a model that predicts something else than those "stop words".  
+
+Hereafter is the result after removing English stop words of the same ```r control_sample``` lines from our training data set:  
+
+```{r datasets_cleaning}
+# Call remove_stop_words function to remove English stop words
+start_time <- proc.time()
+trainCorpusNoStopWords <- remove_stop_words(trainCorpus)
+stop_time <- proc.time()
+proc_time_per_treatment <- set_proc_time_per_treatment(
+        proc_time_per_treatment,
+        "Training data set - Call to remove_stop_words function",
+        start_time,
+        stop_time)
+# Inspect the same few lines again, after removing the "English stop words"
+inspect(trainCorpus[control_lines])
+
+# Convert testing dataset to corpus
+testCorpus <- SimpleCorpus(VectorSource(testing))
+# Call clean_dataset function to proceed with cleaning actions
+start_time <- proc.time()
+testCorpus <- clean_dataset(testCorpus)
+stop_time <- proc.time()
+proc_time_per_treatment <- set_proc_time_per_treatment(
+        proc_time_per_treatment,
+        "Testing data set - Call to clean_dataset function",
+        start_time,
+        stop_time)
+# Call remove_stop_words function to remove English stop words
+start_time <- proc.time()
+testCorpusNoStopWords <- remove_stop_words(testCorpus)
+stop_time <- proc.time()
+proc_time_per_treatment <- set_proc_time_per_treatment(
+        proc_time_per_treatment,
+        "Testing data set - Call to remove_stop_words function",
+        start_time,
+        stop_time)
+
+# Convert validation dataset to corpus
+validationCorpus <- SimpleCorpus(VectorSource(validation))
+# Call clean_dataset function to proceed with cleaning actions
+start_time <- proc.time()
+validationCorpus <- clean_dataset(validationCorpus)
+stop_time <- proc.time()
+proc_time_per_treatment <- set_proc_time_per_treatment(
+        proc_time_per_treatment,
+        "Validation data set - Call to clean_dataset function",
+        start_time,
+        stop_time)
+# Call remove_stop_words function to remove English stop words
+start_time <- proc.time()
+validationCorpusNoStopWords <- remove_stop_words(validationCorpus)
+stop_time <- proc.time()
+proc_time_per_treatment <- set_proc_time_per_treatment(
+        proc_time_per_treatment,
+        "Validation data set - Call to remove_stop_words function",
+        start_time,
+        stop_time)
+```
+
+Finally, the table below presents a few details of the data sets we created for our analysis:  
+- <b>dataset</b>: name of the data set ('Training', 'Testing' or 'Validation')  
+- <b>ratio_total_nb_lines</b>: percentage of the data set out of the original sample or raw data  
+- <b>nb_lines</b>: number of lines in the data set  
+- <b>nb_words</b>: number of words in the data set  
+- <b>words_per_line</b>: average number of words per line  
+- <b>nb_words_after_cleaning</b>: average number of words per line after cleaning  
+- <b>nb_words_no_stop_words</b>: average number of words per line afeter cleaning and removing English stop words  
+
+```{r display_datasets_analysis, cache = FALSE, results = 'asis'}
+datasets_details <- data.frame(
+        dataset = c("training", "testing", "validation"),
+        ratio_total_nb_lines = c(
+                paste0(round(ratio_training, 1)*100,"%"),
+                paste0(round(ratio_testing, 1)*100,"%"),
+                paste0(round(ratio_validation, 1)*100,"%")),
+        nb_lines = c(length(training),
+                     length(testing),
+                     length(validation)),
+        nb_words = c(sum(stri_count_words(training)),
+                     sum(stri_count_words(testing)),
+                     sum(stri_count_words(validation))),
+        words_per_line = c(
+                round(sum(stri_count_words(training))/length(training), 2),
+                round(sum(stri_count_words(testing))/length(testing), 2),
+                round(sum(stri_count_words(validation))/length(validation), 2)),
+        nb_words_after_cleaning = c(sum(stri_count_words(concatenate(trainCorpus$content))),
+                                    sum(stri_count_words(concatenate(testCorpus$content))),
+                                    sum(stri_count_words(concatenate(validationCorpus$content)))),
+        nb_words_no_stop_words = c(sum(stri_count_words(concatenate(trainCorpusNoStopWords$content))),
+                                   sum(stri_count_words(concatenate(testCorpusNoStopWords$content))),
+                                   sum(stri_count_words(concatenate(validationCorpusNoStopWords$content)))))
+
+#datasets_details <- format(datasets_details, nsmall = 1, big.mark = ",")
+datasets_details$nb_lines <- as.numeric(datasets_details$nb_lines)
+datasets_details$nb_words <- as.numeric(datasets_details$nb_words)
+datasets_details$words_per_line <- as.numeric(datasets_details$words_per_line)
+datasets_details$nb_words_after_cleaning <- as.numeric(datasets_details$nb_words_after_cleaning)
+datasets_details$nb_words_no_stop_words <- as.numeric(datasets_details$nb_words_no_stop_words)
+
+kable(datasets_details, format = "markdown")
+```
+
+## Analysis of the frequency of words and words sequences in TRAINING data set
+
+### 1-gram sequence (unigram)
+
+```{r dataset_analysis_1Gram}
+## getNgram: extracts ngrams with the ngram library
+## corpus = input, a SimpleCorpus
+## n = input, number of word in ngrams
+## ng = output, a dataframe of ngram, freq, and probability
+##
+getNgram <- function(corpus, n = 2) {
+        ## Convert corpus to a string
+        str <- concatenate(corpus$content)
+        ngrams <- ngram(str = str, n = n)
+        return(get.phrasetable(ngrams))
+}
+
+## summaryNgram: summarizes the ngram generated by getNgram
+## ngram = input, a dataframe from getNgram
+## summaryTable = output, a dataframe of number of ngrams 
+##   at frequencies >= 1, 2, 3, and 4
+##
+summaryNgram <- function(ngram) {
+        freqNWords <- function(n) sum(ngram$freq >= n)
+        freqNOccurence <- function(n) sum(ngram[ngram$freq >= n, "freq"])
+        n2 = 10
+        n3 = 25
+        n4 = 50
+        n5 = 100
+        totalWords <- dim(ngram)[1]
+        freq2Words <- freqNWords(n2)
+        freq3Words <- freqNWords(n3)
+        freq4Words <- freqNWords(n4)
+        freq5Words <- freqNWords(n5)
+        numWords <- c(totalWords, freq2Words, freq3Words, freq4Words, freq5Words)
+        fracWords <- c(1.0, round(freq2Words/totalWords, 4),
+                       round(freq3Words/totalWords, 4), 
+                       round(freq4Words/totalWords, 4),
+                       round(freq5Words/totalWords, 4))
+        totalOccurrence <- sum(ngram$freq)
+        freq2Occurrence <- freqNOccurence(n2)
+        freq3Occurrence <- freqNOccurence(n3)
+        freq4Occurrence <- freqNOccurence(n4)
+        freq5Occurrence <- freqNOccurence(n5)
+        probWords <- c(1.0, round(freq2Occurrence/totalOccurrence, 4),
+                       round(freq3Occurrence/totalOccurrence, 4),
+                       round(freq4Occurrence/totalOccurrence, 4),
+                       round(freq5Occurrence/totalOccurrence, 4))
+        summaryData <- data.frame(numWords, fracWords, probWords)
+        colnames(summaryData) <- c("Number_of_Words", "Fraction_of_Total", "Probability")
+        rownames(summaryData) <- c("All", 
+                                   paste("Freq >= ", as.character(n2), collapse=''),
+                                   paste("Freq >= ", as.character(n3), collapse=''),
+                                   paste("Freq >= ", as.character(n4), collapse=''),
+                                   paste("Freq >= ", as.character(n5), collapse=''))
+        
+        return(summaryData)
+}
+
+## getNGramSummary
+getNGramSummary <- function(ngram) {
+        # Initialize the output 'nGramSummary' data set
+        nGramSummary <- data.frame()
+        
+        # Calculate the total number of words into training data set and
+        # total number of unique words into ngram data set
+        nb_words_total <- datasets_details[1, 'nb_words']
+        nb_unique_words_total <- dim(ngram)[1]
+        #print("#################################################")
+        #print(dim(ngram))
+        #print(head(ngram))
+        #print(paste0("##### TOTAL NB of WORDS: ", nb_words_total, " ######"))
+        #print(paste0("##### TOTAL NB of UNIQUE WORDS: ", nb_unique_words_total, " ######"))
+        
+        loop <- TRUE
+        iter <- 1
+        nb_words <- 0
+        cumul_freq <- 0
+        curr_ratio <- .1
+        
+        # 
+        while (loop) {
+                nb_words <- nb_words + 1
+                word_freq <- ngram[iter, 'freq']
+                cumul_freq <- cumul_freq + word_freq
+                ratio_freq <- cumul_freq / nb_words_total
+                ratio_nb_w_oo_nb_unique_w <- round(nb_words / nb_unique_words_total, 4)
+                
+                #print("#################################################")
+                #print(paste0("##### NB of WORDS: ", nb_words, " ######"))
+                #print(paste0("##### WORD FREQUENCY: ", word_freq, " ######"))
+                #print(paste0("##### FREQUENCY of the WORD OUT OF GRAND TOTAL: ", round(ratio_freq, 2), " ######"))
+                
+                if (ratio_freq > 0 & ratio_freq >= curr_ratio) {
+                        nGramSummary <- rbind(
+                                nGramSummary,
+                                data.frame(
+                                        "nb_words" = nb_words,
+                                        "frequency_words / nb_words_total" = 
+                                                paste0(round(ratio_freq,2)*100, "%"),
+                                        "cumulated_frequency" = cumul_freq,
+                                        "nb_words / nb_unique_words" = 
+                                                paste0(ratio_nb_w_oo_nb_unique_w*100, "%")))
+                        curr_ratio <- curr_ratio + .1
+                        if (curr_ratio == 1 | nb_words > 4999) loop <- FALSE
+                }
+                
+                # increment the iterator
+                iter <- iter + 1
+                #if (iter == 101) loop <- FALSE
+        }
+        
+        # return the built dataframe with NGram summary
+        return(nGramSummary)
+}
+
+# PROCEEDING WITH GETTING NGRAM (1) WITH ENGLISH STOP WORDS
+start_time <- proc.time()
+train1Gram <- getNgram(trainCorpus, n = 1)
+stop_time <- proc.time()
+proc_time_per_treatment <- set_proc_time_per_treatment(
+        proc_time_per_treatment,
+        "Training data set - Call to getNgram function for 1 gram with English stop words",
+        start_time,
+        stop_time)
+#summaryNgram(train1Gram)
+
+# PROCEEDING WITH GETTING NGRAM (1) WITHOUT ENGLISH STOP WORDS
+start_time <- proc.time()
+train1GramNoStopWords <- getNgram(trainCorpusNoStopWords, n = 1)
+stop_time <- proc.time()
+proc_time_per_treatment <- set_proc_time_per_treatment(
+        proc_time_per_treatment,
+        "Training data set - Call to getNgram function for 1 gram without English stop words",
+        start_time,
+        stop_time)
+##summaryNgram(train1GramNoStopWords)
+
+# Analyse the frequency of words into train1Gram data set
+start_time <- proc.time()
+train1GramSummary <- getNGramSummary(train1Gram)
+proc_time_per_treatment <- set_proc_time_per_treatment(
+        proc_time_per_treatment,
+        "Training data set - Call to getNGramSummary function for 1 gram with English stop words",
+        start_time,
+        stop_time)
+
+# Analyse the frequency of words into train1GramNoStopWords data set
+start_time <- proc.time()
+train1GramNoStopWordsSummary <- getNGramSummary(train1GramNoStopWords)
+proc_time_per_treatment <- set_proc_time_per_treatment(
+        proc_time_per_treatment,
+        "Training data set - Call to getNGramSummary function for 1 gram without English stop words",
+        start_time,
+        stop_time)
+```
+
+We know that our training data set contains a total number of ```r round(datasets_details[1, 'nb_words']/10^6, 3)``` millions of words.  
+
+The table below presents the cumulated frequency of the most frequent words in the training data set, with the following details:  
+<b>nb_words</b>: the number of words to reach this level  
+<b>frequency_words / nb_words_total</b>: the ratio of cumulated frequency of those words out of the total number of words in the training data set  
+<b>cumulated_frequency</b>: the cumulated frequency of those words  
+<b>nb_words / nb_unique_words</b>: the ratio of the number of words to reach this level out of the total number of unique words  
+
+Analysis of the words in training data set <span style="color:red"><b>including</b></span> the English stop words  
+
+```{r display_train1GramSummary, cache = FALSE, results = 'asis'}
+kable(train1GramSummary, format = "markdown")
+```
+
+While considering the English stop words, we can see from the table above that the <b>4 most frequent words</b> represent already <b>12% of the total number of words in training data set</b>, and obviously <b>0% of the total number of unique words</b>.  
+To reach <b>50% of the total number of words</b>, we need only the <b>142 most frequent words</b>, which represent only <b>0.09% of the total number of unique words</b>.  
+Finally, <b>90% of the total number of words</b> are reached with <b>8021 words</b>, ie: <b>5.35% of the total number of unique words</b>.  
+
+Analysis of the words in training data set <span style="color:red"><b>excluding</b></span> the English stop words  
+
+```{r display_train1GramNoStopWordsSummary, cache = FALSE, results = 'asis'}
+kable(train1GramNoStopWordsSummary, format = "markdown")
+```
+
+When excluding the English stop words, we need <b>79 words</b> to have <b>10% of the total number of words in our training data set</b>, which represents <b>0.05% of the total number of unique words</b>.  
+<b>12178 words</b> are needed to reach <b>50% of the total number of words</b>, ie: <b>8.14% of the total number of unique words</b>.  
+
+Words cloud and histogram of the 20 most frequent words in our training data set, <span style="color:red"><b>including</b></span> the English stop words  
+
+```{r display_wordcloud_and_histogram_train1Gram, fig.height = 4, fig.width = 10, fig.align = 'center', cache = FALSE}
+
+par(mfrow=c(1, 2),  mai = c(.1, .1, .1, .1))
+
+wordcloud(train1Gram$ngram,
+          train1Gram$freq,
+          scale = c(5, 1), 
+          max.words = 20,
+          random.order = FALSE,use.r.layout = TRUE)
+
+plot.new()
+
+histTrain1Gram <- train1Gram[1:20,]
+hist_train1Gram <- ggplot(data = histTrain1Gram,
+                          aes(x = ngrams, y = freq)) + #, fill=rainbow(20))) +
+        geom_bar(stat = "identity") +
+        scale_x_discrete(limits = histTrain1Gram$ngrams) +
+        theme_bw() +
+        theme(panel.grid.major.y = element_line(colour = "black", linetype = 3, size = .5),
+              panel.background = element_blank(),
+              axis.title.x = element_text(size=12),
+              axis.text.x = element_text(size=10, angle=45, hjust=1, vjust=1),
+              axis.title.y = element_text(size=12, angle = 90),
+              axis.text.y = element_text(size=10),
+              strip.background = element_rect(color="white", fill="white"),
+              strip.text = element_text(size=12))
+
+vps <- baseViewports()
+pushViewport(vps$inner, vps$figure, vps$plot)
+grid.text(names(histTrain1Gram$ngrams),
+          x = unit(histTrain1Gram$ngrams, "native"),
+          y=unit(-1, "lines"),
+          just="right", rot=50)
+popViewport(3)
+
+print(vp = vpStack(vps$figure, vps$plot), hist_train1Gram)
+```
+
+Words cloud and histogram of the 20 most frequent words in our training data set, <span style="color:red"><b>excluding</b></span> the English stop words  
+
+```{r display_wordcloud_and_histogram_train1GramNoStopWords, fig.height = 4, fig.width = 10, fig.align = 'center', cache = FALSE}
+
+par(mfrow=c(1, 2),  mai = c(.1, .1, .1, .1))
+
+wordcloud(train1GramNoStopWords$ngram,
+          train1GramNoStopWords$freq,
+          scale = c(5, 1), 
+          max.words = 20,
+          random.order = FALSE,use.r.layout = TRUE)
+
+plot.new()
+vps <- baseViewports()
+
+histTrain1GramNoStopWords <- train1GramNoStopWords[1:20,]
+hist_train1GramNoStopWords <- ggplot(data = histTrain1GramNoStopWords,
+                                     aes(x = ngrams, y = freq)) +
+        geom_bar(stat = "identity") +
+        scale_x_discrete(limits = histTrain1GramNoStopWords$ngrams) +
+        theme_bw() +
+        theme(panel.grid.major.y = element_line(colour = "black", linetype = 3, size = .5),
+              panel.background = element_blank(),
+              axis.title.x = element_text(size=12),
+              axis.text.x = element_text(size=10, angle=45, hjust=1, vjust=1),
+              axis.title.y = element_text(size=12, angle = 90),
+              axis.text.y = element_text(size=10),
+              strip.background = element_rect(color="white", fill="white"),
+              strip.text = element_text(size=12))
+
+print(vp = vpStack(vps$figure, vps$plot), hist_train1GramNoStopWords)
+
+```
+
+### 2-gram sequence (bigram)
+
+```{r dataset_analysis_2Gram}
+# PROCEEDING WITH GETTING NGRAM (2) WITH ENGLISH STOP WORDS
+start_time <- proc.time()
+train2Gram <- getNgram(trainCorpus, n = 2)
+stop_time <- proc.time()
+proc_time_per_treatment <- set_proc_time_per_treatment(
+        proc_time_per_treatment,
+        "Training data set - Call to getNgram function for 2 gram with English stop words",
+        start_time,
+        stop_time)
+#summaryNgram(train2Gram)
+
+# PROCEEDING WITH GETTING NGRAM (2) WITHOUT ENGLISH STOP WORDS
+start_time <- proc.time()
+train2GramNoStopWords <- getNgram(trainCorpusNoStopWords, n = 2)
+stop_time <- proc.time()
+proc_time_per_treatment <- set_proc_time_per_treatment(
+        proc_time_per_treatment,
+        "Training data set - Call to getNgram function for 2 gram without English stop words",
+        start_time,
+        stop_time)
+#summaryNgram(train2GramNoStopWords)
+```
+
+Words cloud and histogram of the 20 most frequent words in our training data set, <span style="color:red"><b>including</b></span> the English stop words  
+
+```{r display_wordcloud_and_histogram_train2Gram, fig.height = 4, fig.width = 10, fig.align = 'center', cache = FALSE}
+
+par(mfrow=c(1, 2),  mai = c(.1, .1, .1, .1))
+
+wordcloud(train2Gram$ngram,
+          train2Gram$freq,
+          scale = c(5, 1), 
+          max.words = 20,
+          random.order = FALSE,use.r.layout = TRUE)
+
+plot.new()
+
+histTrain2Gram <- train2Gram[1:20,]
+hist_train2Gram <- ggplot(data = histTrain2Gram,
+                          aes(x = ngrams, y = freq)) +
+        geom_bar(stat = "identity") +
+        scale_x_discrete(limits = histTrain2Gram$ngrams) +
+        theme_bw() +
+        theme(panel.grid.major.y = element_line(colour = "black", linetype = 3, size = .5),
+              panel.background = element_blank(),
+              axis.title.x = element_text(size=12),
+              axis.text.x = element_text(size=10, angle=45, hjust=1, vjust=1),
+              axis.title.y = element_text(size=12, angle = 90),
+              axis.text.y = element_text(size=10),
+              strip.background = element_rect(color="white", fill="white"),
+              strip.text = element_text(size=12))
+
+vps <- baseViewports()
+pushViewport(vps$inner, vps$figure, vps$plot)
+grid.text(names(histTrain2Gram$ngrams),
+          x = unit(histTrain2Gram$ngrams, "native"),
+          y=unit(-1, "lines"),
+          just="right", rot=50)
+popViewport(3)
+
+print(vp = vpStack(vps$figure, vps$plot), hist_train2Gram)
+```
+
+Words cloud and histogram of the 20 most frequent words in our training data set, <span style="color:red"><b>excluding</b></span> the English stop words  
+
+```{r display_wordcloud_and_histogram_train2GramNoStopWords, fig.height = 4, fig.width = 10, fig.align = 'center', cache = FALSE}
+
+par(mfrow=c(1, 2),  mai = c(.1, .1, .1, .1))
+
+wordcloud(train2GramNoStopWords$ngram,
+          train2GramNoStopWords$freq,
+          scale = c(5, 1), 
+          max.words = 20,
+          random.order = FALSE,use.r.layout = TRUE)
+
+plot.new()
+vps <- baseViewports()
+
+histTrain2GramNoStopWords <- train2GramNoStopWords[1:20,]
+hist_train2GramNoStopWords <- ggplot(data = histTrain2GramNoStopWords,
+                                     aes(x = ngrams, y = freq)) +
+        geom_bar(stat = "identity") +
+        scale_x_discrete(limits = histTrain2GramNoStopWords$ngrams) +
+        theme_bw() +
+        theme(panel.grid.major.y = element_line(colour = "black", linetype = 3, size = .5),
+              panel.background = element_blank(),
+              axis.title.x = element_text(size=12),
+              axis.text.x = element_text(size=10, angle=45, hjust=1, vjust=1),
+              axis.title.y = element_text(size=12, angle = 90),
+              axis.text.y = element_text(size=10),
+              strip.background = element_rect(color="white", fill="white"),
+              strip.text = element_text(size=12))
+
+print(vp = vpStack(vps$figure, vps$plot), hist_train2GramNoStopWords)
+
+```
+
+### 3-gram sequence (trigram)
+
+```{r dataset_analysis_3Gram}
+# PROCEEDING WITH GETTING NGRAM (3) WITH ENGLISH STOP WORDS
+start_time <- proc.time()
+train3Gram <- getNgram(trainCorpus, n = 3)
+stop_time <- proc.time()
+proc_time_per_treatment <- set_proc_time_per_treatment(
+        proc_time_per_treatment,
+        "Training data set - Call to getNgram function for 3 gram with English stop words",
+        start_time,
+        stop_time)
+#summaryNgram(train3Gram)
+
+# PROCEEDING WITH GETTING NGRAM (3) WITHOUT ENGLISH STOP WORDS
+start_time <- proc.time()
+train3GramNoStopWords <- getNgram(trainCorpusNoStopWords, n = 3)
+stop_time <- proc.time()
+proc_time_per_treatment <- set_proc_time_per_treatment(
+        proc_time_per_treatment,
+        "Training data set - Call to getNgram function for 3 gram without English stop words",
+        start_time,
+        stop_time)
+#summaryNgram(train3GramNoStopWords)
+```
+
+Words cloud and histogram of the 20 most frequent words in our training data set, <span style="color:red"><b>including</b></span> the English stop words  
+
+```{r display_wordcloud_and_histogram_train3Gram, fig.height = 4, fig.width = 10, fig.align = 'center', cache = FALSE}
+
+par(mfrow=c(1, 2),  mai = c(.1, .1, .1, .1))
+
+wordcloud(train3Gram$ngram,
+          train3Gram$freq,
+          scale = c(5, 1), 
+          max.words = 20,
+          random.order = FALSE,use.r.layout = TRUE)
+
+plot.new()
+
+histTrain3Gram <- train3Gram[1:20,]
+hist_train3Gram <- ggplot(data = histTrain3Gram,
+                          aes(x = ngrams, y = freq)) +
+        geom_bar(stat = "identity") +
+        scale_x_discrete(limits = histTrain3Gram$ngrams) +
+        theme_bw() +
+        theme(panel.grid.major.y = element_line(colour = "black", linetype = 3, size = .5),
+              panel.background = element_blank(),
+              axis.title.x = element_text(size=12),
+              axis.text.x = element_text(size=10, angle=45, hjust=1, vjust=1),
+              axis.title.y = element_text(size=12, angle = 90),
+              axis.text.y = element_text(size=10),
+              strip.background = element_rect(color="white", fill="white"),
+              strip.text = element_text(size=12))
+
+vps <- baseViewports()
+pushViewport(vps$inner, vps$figure, vps$plot)
+grid.text(names(histTrain3Gram$ngrams),
+          x = unit(histTrain3Gram$ngrams, "native"),
+          y=unit(-1, "lines"),
+          just="right", rot=50)
+popViewport(3)
+
+print(vp = vpStack(vps$figure, vps$plot), hist_train3Gram)
+```
+
+Words cloud and histogram of the 20 most frequent words in our training data set, <span style="color:red"><b>excluding</b></span> the English stop words  
+
+```{r display_wordcloud_and_histogram_train3GramNoStopWords, fig.height = 4, fig.width = 10, fig.align = 'center', cache = FALSE}
+
+par(mfrow=c(1, 2),  mai = c(.1, .1, .1, .1))
+
+wordcloud(train3GramNoStopWords$ngram,
+          train3GramNoStopWords$freq,
+          scale = c(5, 1), 
+          max.words = 20,
+          random.order = FALSE,use.r.layout = TRUE)
+
+plot.new()
+vps <- baseViewports()
+
+histTrain3GramNoStopWords <- train3GramNoStopWords[1:20,]
+hist_train3GramNoStopWords <- ggplot(data = histTrain3GramNoStopWords,
+                                     aes(x = ngrams, y = freq)) +
+        geom_bar(stat = "identity") +
+        scale_x_discrete(limits = histTrain3GramNoStopWords$ngrams) +
+        theme_bw() +
+        theme(panel.grid.major.y = element_line(colour = "black", linetype = 3, size = .5),
+              panel.background = element_blank(),
+              axis.title.x = element_text(size=12),
+              axis.text.x = element_text(size=10, angle=45, hjust=1, vjust=1),
+              axis.title.y = element_text(size=12, angle = 90),
+              axis.text.y = element_text(size=10),
+              strip.background = element_rect(color="white", fill="white"),
+              strip.text = element_text(size=12))
+
+print(vp = vpStack(vps$figure, vps$plot), hist_train3GramNoStopWords)
+
+```
+
+## Feedback on the plans for creating a prediction algorithm and Shiny app
+
+Based on the analysis we performed, we have a good start point in order to compute the probabilities of next word in the n-grams we identified in our training data set. We still need to define a strategy regarding the prediction of 'stop words' and how they should be considered in our model.
+
+The Shiny app will obviously have to propose the user to enter a sequence of words. Anytime the user is entering a letter, this app will check if it results with a known word and, if it is the case, will propose the next word to enter based on the probabilities computed in our model. There could be an option in the app to display from 1 to n different words, in addition with the probability for this word to be the next in the sequence.
+
+# APPENDIXES
+
+## APPENDIX 1 - Time for processing treatments
+```{r display_proc_time_per_treatment, cache = FALSE, results = 'asis'}
+kable(proc_time_per_treatment, format = "markdown")
+```
