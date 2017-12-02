@@ -45,6 +45,7 @@ ui <- fluidPage(
                 ),
                 # Main panel for displaying outputs
                 mainPanel(
+                        width = 230,
                         #                tags$head(tags$style(HTML('.skin-blue .main-header .logo {
                         #                                   #font-family: "Georgia", Times, "Times New Roman", serif;
                         #                                   #font-weight: bold;
@@ -71,11 +72,78 @@ ui <- fluidPage(
                         
                         # Output: HTML table with predicted words
                         #         based on the captured text
-                        verbatimTextOutput("predicted_words_print"),
+#                        verbatimTextOutput("predicted_words_print"),
                         
-                        # Output: HTML table with predicted words
-                        #         based on the captured text
-                        tableOutput("predicted_words_table")
-                        
-                ))
+                        fluidRow(
+                                
+                                # Output slope
+                                box(width = 6,
+                                    height = 80,
+                                    solidHeader = FALSE,
+                                    
+                                    h4("Prediction:"),
+                                    # Output: HTML table with predicted words
+                                    #         based on the captured text
+                                    tableOutput("predicted_words_table"))#,
+                                
+                                # Output slope
+#                                box(width = 2,
+#                                    height = 80,
+#                                    solidHeader = FALSE,
+#                                    
+#                                    h4("Prediction using bigrams:"),
+#                                    # Output: HTML table with predicted words
+#                                    #         based on the captured text
+#                                    tableOutput("predicted_words_from_bigrams_table")),
+#                                
+#                                # Output slope
+#                                box(width = 2,
+#                                    height = 80,
+#                                    solidHeader = FALSE,
+#                                    
+#                                    h4("Prediction using trigrams:"),
+#                                    # Output: HTML table with predicted words
+#                                    #         based on the captured text
+#                                    tableOutput("predicted_words_from_trigrams_table")),
+#                                
+#                                # Output slope
+#                                box(width = 2,
+#                                    height = 80,
+#                                    solidHeader = FALSE,
+#                                    
+#                                    h4("Prediction using quadrigrams:"),
+#                                    # Output: HTML table with predicted words
+#                                    #         based on the captured text
+#                                    tableOutput("predicted_words_from_quadrigrams_table")),
+#                                
+#                                # Output slope
+#                                box(width = 2,
+#                                    height = 80,
+#                                    solidHeader = FALSE,
+#                                    
+#                                    h4("Prediction using bigrams (no stop words):"),
+#                                    # Output: HTML table with predicted words
+#                                    #         based on the captured text
+#                                    tableOutput("predicted_words_from_bigrams_no_stop_words_table")),
+#                                
+#                                # Output slope
+#                                box(width = 2,
+#                                    height = 80,
+#                                    solidHeader = FALSE,
+#                                    
+#                                    h4("Prediction using trigrams (no stop words):"),
+#                                    # Output: HTML table with predicted words
+#                                    #         based on the captured text
+#                                    tableOutput("predicted_words_from_trigrams_no_stop_words_table"))#,
+#                                
+#                                # Output slope
+#                                box(width = 2,
+#                                    height = 80,
+#                                    solidHeader = FALSE,
+#                                    
+#                                    h4("Prediction using quadrigrams (no stop words):"),
+#                                    # Output: HTML table with predicted words
+#                                    #         based on the captured text
+#                                    tableOutput("predicted_words_from_quadrigrams_no_stop_words_table"))
+                        )))
 )
