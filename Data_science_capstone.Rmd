@@ -69,13 +69,13 @@ fileList <- c(
 file_details <- data.frame(matrix(ncol = 9, nrow = 0))
 
 # Initialize the sampling factor for study data set
-sampling_factor <- .1
+sampling_factor <- .2
 # Initialize the raw data set
 original_raw_data <- NULL
 raw_data <- NULL
 # Out of the random sample, split into the training, testing and validation data sets
-training_factor <- .6
-testing_factor <- .3
+training_factor <- .7
+testing_factor <- .2
 validation_factor <- .1
 # Initialize the training, testing and validation data sets
 training <- NULL
@@ -992,6 +992,25 @@ look_for_ngram_from_ngrams <- function(bigram, from_trigrams) {
         return(result[,1:2])
 }
 
+
+get_first_n_words <- function(df, n) {
+        ul = unlist(strsplit(df, split = "\\s+"))[1:n]
+        return(paste(ul, collapse = " "))
+}
+
+get_first_3_words <- function(df) {
+        return(get_first_n_words(df, 3))
+}
+
+get_first_2_words <- function(df) {
+        return(get_first_n_words(df, 2))
+}
+
+get_first_1_words <- function(df) {
+        return(get_first_n_words(df, 1))
+}
+
+
 build_prediction_from_ngrams <- function(ngrams) {
         ## 
         # ngrams data sets have the following forms:
@@ -1005,11 +1024,58 @@ build_prediction_from_ngrams <- function(ngrams) {
 #        print(head(stri_split_fixed(ngrams$ngrams, " ", n = 3, tokens_only = TRUE, omit_empty = TRUE)))
 #        first_words_from_ngrams <- stri_split_coll(ngrams$ngrams, " ", n = 1, tokens_only = TRUE, omit_empty = TRUE)
 #        words_from_ngrams <- stri_split_coll(ngrams$ngrams, " ", n = 3, tokens_only = TRUE, omit_empty = TRUE)
-        last_words_from_ngrams <- stri_extract_last_words(ngrams$ngrams)
+#        first_n_words_from_ngrams <- sapply(X = ngrams[1:10, "ngrams"],
+#                                            FUN = function(x) {
+#                                                    tokens <- tokenize_words(x = x)
+                                                    #first_n <- head(x = tokens[[1]], n = (length(tokens[[1]]) - 1))
+                                                    #print("first_n: ")
+                                                    #print(first_n)
+#                                                    result <- ""
+#                                                    for (i in 1:(length(tokens[[1]]) - 1)) {
+#                                                            if (!(is.null(result)) & (result == ""))
+#                                                                    result <- tokens[[1]][i]
+#                                                            else
+#                                                                    result <- paste(result, tokens[[1]][i], sep = " ")
+#                                                    }
+#                                                    result
+#                                            })
+        #first_n_words_from_ngrams <- data.frame()
+        #last_words_from_ngrams <- data.frame()
+        prediction_from_ngrams <- data.frame()
+        tokens <- tokenize_words(ngrams$ngrams)
+#        print("tokens:")
+#        print(head(tokens))
+#        print("length(tokens):")
+#        print(length(tokens))
+        for (i in 1:length(tokens)) {
+#                print("tokens[[i]]:")
+#                print(head(tokens[[i]]))
+                last_word <- tokens[[i]][length(tokens[[i]])]
+                first_n_words <- ""
+                for (k in 1:(length(tokens[[i]]) - 1)) {
+                        if (!(is.null(first_n_words)) & (first_n_words == ""))
+                                first_n_words <- tokens[[i]][k]
+                        else
+                                first_n_words <- paste(first_n_words, tokens[[i]][k], sep = " ")
+                }
+                #first_n_words_from_ngrams <- rbind(first_n_words_from_ngrams,
+                #                                   data.frame(ngrams = first_n_words))
+                #last_words_from_ngrams <- rbind(last_words_from_ngrams, last_word)
+                prediction_from_ngrams <- rbind(prediction_from_ngrams,
+                                                data.frame(ngrams = first_n_words,
+                                                           next_word = last_word))
+        }
+#        print(head(prediction_from_ngrams))
+        prediction_from_ngrams <- cbind(prediction_from_ngrams, ngrams$freq)
+#        print("@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@")
+#        print(head(first_n_words_from_ngrams))
+#        print(head(last_words_from_ngrams))
+#        print(head(prediction_from_ngrams))
+#        last_words_from_ngrams <- stri_extract_last_words(ngrams$ngrams)
 #        prediction_from_ngrams <- NULL
-        prediction_from_ngrams <- data.frame(ngrams = ngrams$ngrams,
-                                             next_word = last_words_from_ngrams,
-                                             freq = ngrams$freq)
+#        prediction_from_ngrams <- data.frame(ngrams = ngrams$ngrams,
+#                                             next_word = last_words_from_ngrams,
+#                                             freq = ngrams$freq)
 #        for (i in 1:length(words_from_ngrams)) {
 #                prediction_from_ngrams <- rbind(prediction_from_ngrams,
 #                                                data.frame(ngrams = paste(words_from_ngrams[[i]][1],
@@ -1021,21 +1087,60 @@ build_prediction_from_ngrams <- function(ngrams) {
 }
 ```
 
-```{r text_prediction_create_and_store_ngrams, cache = TRUE}
-quadrigrams <- build_prediction_from_ngrams(ngrams = train4Gram)
-#print(head(quadrigrams))
+```{r text_prediction_create_and_store_ngrams}
+print("###############################################################")
+print("Start building quadrigrams data frame")
+#print("colnames(train4Gram)")
+#print(colnames(train4Gram))
+print(paste0("nrow(train4Gram): ", nrow(train4Gram)))
+quadrigrams <- train4Gram[train4Gram[, "freq"] != 1, ]
+print(paste0("nrow(train4Gram): ", nrow(quadrigrams)))
+quadrigrams[, "next_word"] <- stri_extract_last_words(quadrigrams$ngrams)
+quadrigrams[, "ngrams"] <- as.character(quadrigrams[, "ngrams"])
+quadrigrams[, "ngrams"] <- unlist(lapply(quadrigrams[, "ngrams"], get_first_3_words))
+
+print("Quadrigrams done.")
+print(head(quadrigrams))
 # Save dataframe 'quadrigrams' to rda file
-save(quadrigrams, file = "quadrigrams.rda")
+#save(quadrigrams, file = "quadrigrams.rda")
 
-trigrams <- build_prediction_from_ngrams(ngrams = train3Gram)
-#print(head(trigrams))
+print("Start building trigrams data frame")
+#print("colnames(train3Gram)")
+#print(colnames(train3Gram))
+print(paste0("nrow(train3Gram): ", nrow(train3Gram)))
+trigrams <- train3Gram[train3Gram[, "freq"] != 1, ]
+print(paste0("nrow(train3Gram): ", nrow(trigrams)))
+trigrams[, "next_word"] <- stri_extract_last_words(trigrams$ngrams)
+trigrams[, "ngrams"] <- as.character(trigrams[, "ngrams"])
+trigrams[, "ngrams"] <- unlist(lapply(trigrams[, "ngrams"], get_first_2_words))
+
+print("Trigrams done.")
+print(head(trigrams))
 # Save dataframe 'trigrams' to rda file
-save(trigrams, file = "trigrams.rda")
+#save(trigrams, file = "trigrams.rda")
 
-bigrams <- build_prediction_from_ngrams(ngrams = train2Gram)
-#print(head(bigrams))
+print("Start building bigrams data frame")
+#print("colnames(train2Gram)")
+#print(colnames(train2Gram))
+print(paste0("nrow(train2Gram): ", nrow(train2Gram)))
+bigrams <- train2Gram[train2Gram[, "freq"] != 1, ]
+print(paste0("nrow(train2Gram): ", nrow(bigrams)))
+bigrams[, "next_word"] <- stri_extract_last_words(bigrams$ngrams)
+bigrams[, "ngrams"] <- as.character(bigrams[, "ngrams"])
+bigrams[, "ngrams"] <- unlist(lapply(bigrams[, "ngrams"], get_first_1_words))
+
+print("Bigrams done.")
+print(head(bigrams))
 # Save dataframe 'bigrams' to rda file
-save(bigrams, file = "bigrams.rda")
+#save(bigrams, file = "bigrams.rda")
+
+bigrams$n <- 2
+trigrams$n <- 3
+quadrigrams$n <- 4
+
+ngrams <- rbind(bigrams, trigrams, quadrigrams)
+# Save dataframe 'bigrams' to rda file
+save(ngrams, file = "ngrams.rda")
 ```
 
 # APPENDIXES
